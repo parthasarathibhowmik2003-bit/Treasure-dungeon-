@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forbidden Treasure - Extended</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+            color: #e0e0e0;
+        }
+        #gameContainer {
+            text-align: center;
+        }
+        canvas {
+            border: 3px solid #c9a227;
+            background: #0f0f23;
+            box-shadow: 0 0 20px rgba(201, 162, 39, 0.3);
+        }
+        #ui {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            font-size: 18px;
+            color: #c9a227;
+        }
+        #message {
+            height: 30px;
+            font-size: 16px;
+            color: #ff6b6b;
+            margin-top: 10px;
+        }
+        #controls {
+            margin-top: 15px;
+            color: #888;
+            font-size: 14px;
+        }
+        .stat { color: #ffd700; }
+        .hp { color: #ff4444; }
+        .gold { color: #ffd700; }
+        #startScreen, #gameOverScreen {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+        .hidden { display: none !important; }
+        h1 {
+            color: #c9a227;
+            font-size: 48px;
+            margin-bottom: 20px;
+            text-shadow: 0 0 10px rgba(201, 162, 39, 0.5);
+        }
+        button {
+            padding: 15px 40px;
+            font-size: 20px;
+            background: #c9a227;
+            color: #1a1a2e;
+            border: none;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            margin: 10px;
+        }
+        button:hover { background: #e0c040; }
+        #levelInfo {
+            color: #888;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <div id="startScreen">
+            <h1>🏴‍☠️ Forbidden Treasure</h1>
+            <p style="color:#888; margin-bottom:20px;">
+                Navigate 10 deadly dungeon levels.<br>
+                Collect gold, find keys, avoid traps & enemies.<br>
+                Defeat the Dragon King on Level 10!
+            </p>
+            <button onclick="startGame()">Enter Dungeon</button>
+        </div>
+        <div id="gameOverScreen" class="hidden">
+            <h1 id="endTitle">Game Over</h1>
+            <p id="endMessage" style="color:#888; margin-bottom:20px;"></p>
+            <button onclick="startGame()">Play Again</button>
+        </div>
+        <div id="ui">
+            <div>❤️ <span class="hp" id="hp">100</span></div>
+            <div>💰 <span class="gold" id="score">0</span></div>
+            <div>🔑 <span class="stat" id="keys">0</span></div>
+            <div>Level: <span class="stat" id="level">1</span>/10</div>
+        </div>
+        <canvas id="game" width="640" height="480"></canvas>
+        <div id="message"></div>
+        <div id="levelInfo"></div>
+        <div id="controls">Arrow Keys / WASD to move • Space to attack • Find 🔑 to unlock 🚪</div>
+    </div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const TILE = 32;
+const COLS = 20;
+const ROWS = 15;
+
+let player, level, gold, traps, exit, particles, messageTimer;
+let enemies, potions, keys, lockedDoors, boss;
+let currentLevel = 1;
+let gameRunning = false;
+let attackCooldown = 0;
+
+const TILE_FLOOR = 0;
+const TILE_WALL = 1;
+const TILE_EXIT = 2;
+const TILE_LOCKED = 3;
+
+const LEVEL_CONFIG = [
+    { name: "The Entrance", rooms: 4, gold: 3, traps: 2, enemies: 0, potions: 2, keys: 0, locked: 0, fog: 4 },
+    { name: "Dark Tunnels", rooms: 5, gold: 4, traps: 3, enemies: 1, potions: 2, keys: 1, locked: 1, fog: 4 },
+    { name: "Trap Chamber", rooms: 5, gold: 5, traps: 5, enemies: 2, potions: 1, keys: 1, locked: 1, fog: 3 },
+    { name: "Goblin Warren", rooms: 6, gold: 5, traps: 3, enemies: 4, potions: 2, keys: 1, locked: 2, fog: 4 },
+    { name: "Flooded Caves", rooms: 6, gold: 6, traps: 4, enemies: 5, potions: 2, keys: 2, locked: 2, fog: 3 },
+    { name: "Ancient Ruins", rooms: 7, gold: 6, traps: 5, enemies: 6, potions: 2, keys: 2, locked: 3, fog: 4 },
+    { name: "Shadow Maze", rooms: 7, gold: 7, traps: 6, enemies: 7, potions: 1, keys: 2, locked: 3, fog: 3 },
+    { name: "Lava Pits", rooms: 8, gold: 7, traps: 8, enemies: 8, potions: 2, keys: 3, locked: 4, fog: 3 },
+    { name: "Crypt of Bones", rooms: 8, gold: 8, traps: 6, enemies: 10, potions: 2, keys: 3, locked: 4, fog: 4 },
+    { name: "Dragon's Lair", rooms: 6, gold: 10, traps: 5, enemies: 0, potions: 3, keys: 0, locked: 0, fog: 5, boss: true }
+];
+
+function generateLevel(lvl) {
+    const config = LEVEL_CONFIG[lvl - 1];
+    let map = Array(ROWS).fill().map(() => Array(COLS).fill(TILE_WALL));
+    
+    // Create rooms
+    const rooms = [];
+    const roomCount = config.rooms;
+    
+    for (let i = 0; i < roomCount; i++) {
+        let w = 3 + Math.floor(Math.random() * 4);
+        let h = 3 + Math.floor(Math.random() * 4);
+        let x = 1 + Math.floor(Math.random() * (COLS - w - 2));
+        let y = 1 + Math.floor(Math.random() * (ROWS - h - 2));
+        
+        let overlap = false;
+        for (let r of rooms) {
+            if (x < r.x + r.w + 1 && x + w + 1 > r.x && 
+                y < r.y + r.h + 1 && y + h + 1 > r.y) {
+                overlap = true; break;
+            }
+        }
+        if (!overlap) {
+            rooms.push({x, y, w, h, center: {x: Math.floor(x + w/2), y: Math.floor(y + h/2)}});
+            for (let ry = y; ry < y + h; ry++) {
+                for (let rx = x; rx < x + w; rx++) {
+                    map[ry][rx] = TILE_FLOOR;
+                }
+            }
+        }
+    }
+    
+    // Connect rooms
+    for (let i = 0; i < rooms.length - 1; i++) {
+        let a = rooms[i], b = rooms[i+1];
+        let ax = a.center.x, ay = a.center.y;
+        let bx = b.center.x, by = b.center.y;
+        
+        while (ax !== bx) {
+            map[ay][ax] = TILE_FLOOR;
+            ax += ax < bx ? 1 : -1;
+        }
+        while (ay !== by) {
+            map[ay][ax] = TILE_FLOOR;
+            ay += ay < by ? 1 : -1;
+        }
+    }
+    
+    // Collect floor tiles
+    let floorTiles = [];
+    for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+            if (map[y][x] === TILE_FLOOR) floorTiles.push({x, y});
+        }
+    }
+    
+    // Player start (first room)
+    let startRoom = rooms[0];
+    player.x = startRoom.center.x;
+    player.y = startRoom.center.y;
+    
+    // Remove player position from floor tiles
+    floorTiles = floorTiles.filter(t => !(t.x === player.x && t.y === player.y));
+    
+    // Exit (last room or boss room)
+    let exitRoom = rooms[rooms.length - 1];
+    exit = {
+        x: exitRoom.center.x,
+        y: exitRoom.center.y
+    };
+    floorTiles = floorTiles.filter(t => !(t.x === exit.x && t.y === exit.y));
+    
+    // Locked doors
+    lockedDoors = [];
+    for (let i = 0; i < config.locked && floorTiles.length > 0; i++) {
+        let idx = Math.floor(Math.random() * floorTiles.length);
+        let door = floorTiles[idx];
+        // Place near corridor
+        lockedDoors.push({...door, hp: 3});
+        map[door.y][door.x] = TILE_LOCKED;
+        floorTiles.splice(idx, 1);
+    }
+    
+    // Gold
+    gold = [];
+    for (let i = 0; i < config.gold && floorTiles.length > 0; i++) {
+        let idx = Math.floor(Math.random() * floorTiles.length);
+        gold.push({...floorTiles[idx], value: 10 + Math.floor(Math.random() * 20) + (lvl * 5)});
+        floorTiles.splice(idx, 1);
+    }
+    
+    // Potions
+    potions = [];
+    for (let i = 0; i < config.potions && floorTiles.length > 0; i++) {
+        let idx = Math.floor(Math.random() * floorTiles.length);
+        potions.push({...floorTiles[idx], heal: 20 + Math.floor(Math.random() * 20)});
+        floorTiles.splice(idx, 1);
+    }
+    
+    // Keys
+    keys = [];
+    for (let i = 0; i < config.keys && floorTiles.length > 0; i++) {
+        let idx = Math.floor(Math.random() * floorTiles.length);
+        keys.push({...floorTiles[idx]});
+        floorTiles.splice(idx, 1);
+    }
+    
+    // Traps
+    traps = [];
+    for (let i = 0; i < config.traps && floorTiles.length > 0; i++) {
+        let idx = Math.floor(Math.random() * floorTiles.length);
+        traps.push({...floorTiles[idx], damage: 10 + Math.floor(Math.random() * 15) + (lvl * 2)});
+        floorTiles.splice(idx, 1);
+    }
+    
+    // Enemies
+    enemies = [];
+    for (let i = 0; i < config.enemies && floorTiles.length > 0; i++) {
+        let idx = Math.floor(Math.random() * floorTiles.length);
+        let hp = 20 + (lvl * 10);
+        enemies.push({
+            ...floorTiles[idx], 
+            hp: hp, 
+            maxHp: hp, 
+            damage: 5 + (lvl * 3),
+            stunned: 0
+        });
+        floorTiles.splice(idx, 1);
+    }
+    
+    // Boss for level 10
+    boss = null;
+    if (config.boss) {
+        let bossRoom = rooms[Math.floor(rooms.length / 2)];
+        boss = {
+            x: bossRoom.center.x,
+            y: bossRoom.center.y,
+            hp: 200,
+            maxHp: 200,
+            damage: 25,
+            moveTimer: 0
+        };
+        // Clear area around boss
+        floorTiles = floorTiles.filter(t => Math.abs(t.x - boss.x) + Math.abs(t.y - boss.y) > 2);
+    }
+    
+    document.getElementById('levelInfo').textContent = 
+        `Level ${lvl}: ${config.name} | Rooms: ${rooms.length} | Enemies: ${config.enemies}${config.boss ? ' + BOSS' : ''}`;
+    
+    return { map, fogRange: config.fog };
+}
+
+function startGame() {
+    document.getElementById('startScreen').classList.add('hidden');
+    document.getElementById('gameOverScreen').classList.add('hidden');
+    currentLevel = 1;
+    particles = [];
+    player = {x: 0, y: 0, hp: 100, maxHp: 100, gold: 0, keys: 0};
+    let levelData = generateLevel(currentLevel);
+    level = levelData.map;
+    gameRunning = true;
+    updateUI();
+    gameLoop();
+}
+
+function showMessage(text, color = '#ff6b6b') {
+    const msg = document.getElementById('message');
+    msg.textContent = text;
+    msg.style.color = color;
+    clearTimeout(messageTimer);
+    messageTimer = setTimeout(() => msg.textContent = '', 2000);
+}
+
+function updateUI() {
+    document.getElementById('hp').textContent = player.hp;
+    document.getElementById('score').textContent = player.gold;
+    document.getElementById('keys').textContent = player.keys;
+    document.getElementById('level').textContent = currentLevel;
+}
+
+function spawnParticles(x, y, color, count = 8) {
+    for (let i = 0; i < count; i++) {
+        particles.push({
+            x: x * TILE + TILE/2,
+            y: y * TILE + TILE/2,
+            vx: (Math.random() - 0.5) * 6,
+            vy: (Math.random() - 0.5) * 6,
+            life: 1,
+            color: color,
+            size: 2 + Math.random() * 4
+        });
+    }
+}
+
+function moveEnemies() {
+    for (let enemy of enemies) {
+        if (enemy.stunned > 0) {
+            enemy.stunned--;
+            continue;
+        }
+        
+        let dist = Math.abs(enemy.x - player.x) + Math.abs(enemy.y - player.y);
+        if (dist > 6) continue; // Don't move if far away
+        
+        let dx = 0, dy = 0;
+        if (Math.abs(player.x - enemy.x) > Math.abs(player.y - enemy.y)) {
+            dx = player.x > enemy.x ? 1 : -1;
+        } else {
+            dy = player.y > enemy.y ? 1 : -1;
+        }
+        
+        let nx = enemy.x + dx;
+        let ny = enemy.y + dy;
+        
+        // Check collision with other enemies
+        let blocked = enemies.some(e => e !== enemy && e.x === nx && e.y === ny);
+        if (!blocked && level[ny][nx] !== TILE_WALL && level[ny][nx] !== TILE_LOCKED &&
+            !(nx === exit.x && ny === exit.y)) {
+            enemy.x = nx;
+            enemy.y = ny;
+        }
+        
+        // Attack player
+        if (enemy.x === player.x && enemy.y === player.y) {
+            player.hp -= enemy.damage;
+            spawnParticles(player.x, player.y, '#ff4444', 10);
+            showMessage(`Enemy hit! -${enemy.damage} HP`, '#ff4444');
+            updateUI();
+            if (player.hp <= 0) gameOver(false);
+        }
+    }
+}
+
+function moveBoss() {
+    if (!boss) return;
+    boss.moveTimer++;
+    if (boss.moveTimer < 2) return; // Boss moves slower
+    boss.moveTimer = 0;
+    
+    let dist = Math.abs(boss.x - player.x) + Math.abs(boss.y - player.y);
+    if (dist > 8) return;
+    
+    // Boss can move diagonally-ish
+    let dx = 0, dy = 0;
+    if (boss.x < player.x) dx = 1;
+    else if (boss.x > player.x) dx = -1;
+    if (boss.y < player.y) dy = 1;
+    else if (boss.y > player.y) dy = -1;
+    
+    let nx = boss.x + dx;
+    let ny = boss.y + dy;
+    
+    if (level[ny][nx] !== TILE_WALL && level[ny][nx] !== TILE_LOCKED) {
+        boss.x = nx;
+        boss.y = ny;
+    }
+    
+    // Boss attack (area damage)
+    if (Math.abs(boss.x - player.x) <= 1 && Math.abs(boss.y - player.y) <= 1) {
+        player.hp -= boss.damage;
+        spawnParticles(player.x, player.y, '#ff0000', 20);
+        showMessage(`DRAGON FIRE! -${boss.damage} HP`, '#ff0000');
+        updateUI();
+        if (player.hp <= 0) gameOver(false);
+    }
+}
+
+function attack() {
+    if (attackCooldown > 0) return;
+    attackCooldown = 15;
+    
+    // Attack adjacent enemies
+    let hit = false;
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        let e = enemies[i];
+        if (Math.abs(e.x - player.x) <= 1 && Math.abs(e.y - player.y) <= 1) {
+            e.hp -= 20;
+            e.stunned = 2;
+            spawnParticles(e.x, e.y, '#ff8800', 8);
+            hit = true;
+            if (e.hp <= 0) {
+                spawnParticles(e.x, e.y, '#ff4444', 15);
+                showMessage('Enemy defeated!', '#4ecdc4');
+                enemies.splice(i, 1);
+            } else {
+                showMessage('Hit enemy!', '#ff8800');
+            }
+        }
+    }
+    
+    // Attack boss
+    if (boss && Math.abs(boss.x - player.x) <= 1 && Math.abs(boss.y - player.y) <= 1) {
+        boss.hp -= 20;
+        spawnParticles(boss.x, boss.y, '#ff0000', 12);
+        hit = true;
+        if (boss.hp <= 0) {
+            spawnParticles(boss.x, boss.y, '#ffd700', 30);
+            showMessage('DRAGON SLAIN! +500 Gold!', '#ffd700');
+            player.gold += 500;
+            boss = null;
+        } else {
+            showMessage(`Boss HP: ${boss.hp}`, '#ff8800');
+        }
+    }
+    
+    // Attack locked doors
+    for (let door of lockedDoors) {
+        if (Math.abs(door.x - player.x) <= 1 && Math.abs(door.y - player.y) <= 1) {
+            door.hp -= 1;
+            spawnParticles(door.x, door.y, '#888', 5);
+            hit = true;
+            if (door.hp <= 0) {
+                level[door.y][door.x] = TILE_FLOOR;
+                showMessage('Door smashed!', '#4ecdc4');
+            } else {
+                showMessage(`Door: ${door.hp} hits left`, '#888');
+            }
+        }
+    }
+    
+    if (!hit) {
+        // Swing animation
+        spawnParticles(player.x, player.y, '#fff', 5);
+    }
+}
+
+function movePlayer(dx, dy) {
+    if (!gameRunning) return;
+    
+    let nx = player.x + dx;
+    let ny = player.y + dy;
+    
+    if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) return;
+    if (level[ny][nx] === TILE_WALL) return;
+    if (level[ny][nx] === TILE_LOCKED && player.keys <= 0) {
+        showMessage('Locked! Need a key or smash it (Space)', '#888');
+        return;
+    }
+    if (level[ny][nx] === TILE_LOCKED && player.keys > 0) {
+        player.keys--;
+        level[ny][nx] = TILE_FLOOR;
+        spawnParticles(nx, ny, '#ffd700', 10);
+        showMessage('Door unlocked!', '#4ecdc4');
+        updateUI();
+    }
+    
+    player.x = nx;
+    player.y = ny;
+    
+    // Check gold
+    for (let i = gold.length - 1; i >= 0; i--) {
+        if (gold[i].x === nx && gold[i].y === ny) {
+            player.gold += gold[i].value;
+            spawnParticles(nx, ny, '#ffd700', 12);
+            showMessage(`+${gold[i].value} Gold!`, '#ffd700');
+            gold.splice(i, 1);
+            updateUI();
+        }
+    }
+    
+    // Check potions
+    for (let i = potions.length - 1; i >= 0; i--) {
+        if (potions[i].x === nx && potions[i].y === ny) {
+            player.hp = Math.min(player.maxHp, player.hp + potions[i].heal);
+            spawnParticles(nx, ny, '#00ff88', 12);
+            showMessage(`+${potions[i].heal} HP!`, '#00ff88');
+            potions.splice(i, 1);
+            updateUI();
+        }
+    }
+    
+    // Check keys
+    for (let i = keys.length - 1; i >= 0; i--) {
+        if (keys[i].x === nx && keys[i].y === ny) {
+            player.keys++;
+            spawnParticles(nx, ny, '#ffd700', 10);
+            showMessage('Key found!', '#ffd700');
+            keys.splice(i, 1);
+            updateUI();
+        }
+    }
+    
+    // Check traps
+    for (let trap of traps) {
+        if (trap.x === nx && trap.y === ny) {
+            player.hp -= trap.damage;
+            spawnParticles(nx, ny, '#ff4444', 15);
+            showMessage(`Trap! -${trap.damage} HP`, '#ff4444');
+            updateUI();
+            if (player.hp <= 0) gameOver(false);
+        }
+    }
+    
+    // Check enemy collision
+    for (let enemy of enemies) {
+        if (enemy.x === nx && enemy.y === ny) {
+            player.hp -= enemy.damage;
+            spawnParticles(nx, ny, '#ff4444', 10);
+            showMessage(`Enemy hit! -${enemy.damage} HP`, '#ff4444');
+            updateUI();
+            if (player.hp <= 0) gameOver(false);
+        }
+    }
+    
+    // Check boss collision
+    if (boss && boss.x === nx && boss.y === ny) {
+        player.hp -= boss.damage;
+        spawnParticles(nx, ny, '#ff0000', 20);
+        showMessage(`Dragon hit! -${boss.damage} HP`, '#ff0000');
+        updateUI();
+        if (player.hp <= 0) gameOver(false);
+    }
+    
+    // Check exit
+    if (exit.x === nx && exit.y === ny) {
+        if (currentLevel >= 10) {
+            gameOver(true);
+        } else {
+            currentLevel++;
+            showMessage(`Level ${currentLevel}!`, '#4ecdc4');
+            particles = [];
+            let levelData = generateLevel(currentLevel);
+            level = levelData.map;
+            updateUI();
+        }
+    }
+    
+    // Move enemies after player
+    moveEnemies();
+    moveBoss();
+}
+
+function gameOver(won) {
+    gameRunning = false;
+    const screen = document.getElementById('gameOverScreen');
+    const title = document.getElementById('endTitle');
+    const msg = document.getElementById('endMessage');
+    
+    screen.classList.remove('hidden');
+    if (won) {
+        title.textContent = '🎉 LEGENDARY VICTORY!';
+        title.style.color = '#ffd700';
+        msg.innerHTML = `You conquered all 10 levels!<br>Total loot: <span style="color:#ffd700">${player.gold} gold</span><br>Remaining HP: <span style="color:#ff4444">${player.hp}</span>`;
+    } else {
+        title.textContent = '💀 You Died';
+        title.style.color = '#ff4444';
+        msg.innerHTML = `Reached Level ${currentLevel}<br>Collected: <span style="color:#ffd700">${player.gold} gold</span>`;
+    }
+}
+
+function draw() {
+    ctx.fillStyle = '#0f0f23';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    const config = LEVEL_CONFIG[currentLevel - 1];
+    
+    // Draw map
+    for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+            let tx = x * TILE;
+            let ty = y * TILE;
+            
+            if (level[y][x] === TILE_WALL) {
+                ctx.fillStyle = '#2d2d44';
+                ctx.fillRect(tx, ty, TILE, TILE);
+                ctx.fillStyle = '#3a3a55';
+                ctx.fillRect(tx + 2, ty + 2, TILE - 4, TILE - 4);
+            } else if (level[y][x] === TILE_LOCKED) {
+                ctx.fillStyle = '#1e1e32';
+                ctx.fillRect(tx, ty, TILE, TILE);
+                ctx.fillStyle = '#664400';
+                ctx.fillRect(tx + 4, ty + 4, TILE - 8, TILE - 8);
+            } else {
+                ctx.fillStyle = '#1e1e32';
+                ctx.fillRect(tx, ty, TILE, TILE);
+                if ((x + y) % 3 === 0) {
+                    ctx.fillStyle = '#252540';
+                    ctx.fillRect(tx + 8, ty + 8, 4, 4);
+                }
+            }
+        }
+    }
+    
+    // Draw exit
+    let ex = exit.x * TILE, ey = exit.y * TILE;
+    ctx.fillStyle = '#4ecdc4';
+    ctx.font = '24px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🚪', ex + TILE/2, ey + TILE/2);
+    
+    // Draw locked doors
+    for (let door of lockedDoors) {
+        let dx = door.x * TILE, dy = door.y * TILE;
+        ctx.fillText('🔒', dx + TILE/2, dy + TILE/2);
+    }
+    
+    // Draw gold
+    for (let g of gold) {
+        let gx = g.x * TILE, gy = g.y * TILE;
+        ctx.shadowColor = '#ffd700';
+        ctx.shadowBlur = 10;
+        ctx.fillText('💰', gx + TILE/2, gy + TILE/2);
+        ctx.shadowBlur = 0;
+    }
+    
+    // Draw potions
+    for (let p of potions) {
+        let px = p.x * TILE, py = p.y * TILE;
+        ctx.fillText('🧪', px + TILE/2, py + TILE/2);
+    }
+    
+    // Draw keys
+    for (let k of keys) {
+        let kx = k.x * TILE, ky = k.y * TILE;
+        ctx.shadowColor = '#ffd700';
+        ctx.shadowBlur = 8;
+        ctx.fillText('🔑', kx + TILE/2, ky + TILE/2);
+        ctx.shadowBlur = 0;
+    }
+    
+    // Draw traps
+    for (let t of traps) {
+        let tx = t.x * TILE, ty = t.y * TILE;
+        ctx.fillText('⚡', tx + TILE/2, ty + TILE/2);
+    }
+    
+    // Draw enemies
+    for (let e of enemies) {
+        let ex = e.x * TILE, ey = e.y * TILE;
+        ctx.fillText('👹', ex + TILE/2, ey + TILE/2);
+        // HP bar
+        let barWidth = TILE - 4;
+        let hpPercent = e.hp / e.maxHp;
+        ctx.fillStyle = '#333';
+        ctx.fillRect(ex + 2, ey - 4, barWidth, 4);
+        ctx.fillStyle = hpPercent > 0.5 ? '#0f0' : '#f00';
+        ctx.fillRect(ex + 2, ey - 4, barWidth * hpPercent, 4);
+    }
+    
+    // Draw boss
+    if (boss) {
+        let bx = boss.x * TILE, by = boss.y * TILE;
+        ctx.font = '32px Arial';
+        ctx.fillText('🐉', bx + TILE/2, by + TILE/2);
+        ctx.font = '24px Arial';
+        // Boss HP bar
+        let barWidth = TILE * 2;
+        let hpPercent = boss.hp / boss.maxHp;
+        ctx.fillStyle = '#333';
+        ctx.fillRect(bx - TILE/2, by - 8, barWidth, 6);
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(bx - TILE/2, by - 8, barWidth * hpPercent, 6);
+    }
+    
+    // Draw player
+    let px = player.x * TILE, py = player.y * TILE;
+    ctx.fillText('🧙', px + TILE/2, py + TILE/2);
+    
+    // Attack swing effect
+    if (attackCooldown > 10) {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(px + TILE/2, py + TILE/2, TILE, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+    
+    // Draw particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+        let p = particles[i];
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, p.size || 4, p.size || 4);
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= 0.03;
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+    ctx.globalAlpha = 1;
+    
+    // Fog of war
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+            let dist = Math.sqrt((x - player.x)**2 + (y - player.y)**2);
+            if (dist > config.fog) {
+                ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+            } else if (dist > config.fog - 1) {
+                ctx.globalAlpha = 0.5;
+                ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+                ctx.globalAlpha = 1;
+            }
+        }
+    }
+}
+
+function gameLoop() {
+    if (!gameRunning) return;
+    if (attackCooldown > 0) attackCooldown--;
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+// Input
+document.addEventListener('keydown', (e) => {
+    if (!gameRunning) return;
+    switch(e.key) {
+        case 'ArrowUp': case 'w': case 'W': movePlayer(0, -1); break;
+        case 'ArrowDown': case 's': case 'S': movePlayer(0, 1); break;
+        case 'ArrowLeft': case 'a': case 'A': movePlayer(-1, 0); break;
+        case 'ArrowRight': case 'd': case 'D': movePlayer(1, 0); break;
+        case ' ': case 'Enter': attack(); break;
+    }
+});
+
+// Start screen
+draw();
+</script>
+</body>
+</html>
